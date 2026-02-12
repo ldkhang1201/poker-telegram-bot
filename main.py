@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 
 from infrastructure.db.account_repository_sqlite import SqliteAccountRepository
 from infrastructure.db.identity_repository_sqlite import SqliteIdentityRepository
+from infrastructure.db.table_repository_sqlite import SqliteTableRepository
 from infrastructure.db.user_repository_sqlite import SqliteUserRepository
 from interfaces.discord.handlers import create_discord_bot
 from interfaces.telegram.handlers import create_telegram_bot
@@ -21,11 +22,12 @@ def _run_telegram_bot(
     user_repo: SqliteUserRepository,
     identity_repo: SqliteIdentityRepository,
     account_repo: SqliteAccountRepository,
+    table_repo: SqliteTableRepository,
 ) -> None:
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN environment variable is not set.")
 
-    bot = create_telegram_bot(BOT_TOKEN, user_repo, identity_repo, account_repo)
+    bot = create_telegram_bot(BOT_TOKEN, user_repo, identity_repo, account_repo, table_repo)
     bot.infinity_polling()
 
 
@@ -38,7 +40,9 @@ def _run_discord_bot(
     if not DISCORD_TOKEN:
         return
 
-    bot = create_discord_bot(user_repo, identity_repo, account_repo)
+    table_repo = SqliteTableRepository(DB_PATH)
+
+    bot = create_discord_bot(user_repo, identity_repo, account_repo, table_repo)
     bot.run(DISCORD_TOKEN)
 
 
@@ -46,11 +50,12 @@ def main() -> None:
     user_repo = SqliteUserRepository(DB_PATH)
     identity_repo = SqliteIdentityRepository(DB_PATH, user_repo)
     account_repo = SqliteAccountRepository(DB_PATH)
+    table_repo = SqliteTableRepository(DB_PATH)
 
     threads = [
         threading.Thread(
             target=_run_telegram_bot,
-            args=(user_repo, identity_repo, account_repo),
+            args=(user_repo, identity_repo, account_repo, table_repo),
             name="telegram-bot",
             daemon=False,
         ),

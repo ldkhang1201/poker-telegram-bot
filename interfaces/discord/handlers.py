@@ -15,6 +15,7 @@ from application.services import (
     sell_chips_to_user,
 )
 from domain.repositories import AccountRepository, IdentityRepository, UserRepository
+from infrastructure.db.table_repository_sqlite import SqliteTableRepository
 
 
 def _build_external_context(user: discord.abc.User) -> ExternalContext:
@@ -35,6 +36,7 @@ def create_discord_bot(
     user_repo: UserRepository,
     identity_repo: IdentityRepository,
     account_repo: AccountRepository,
+    table_repo: SqliteTableRepository,
 ) -> commands.Bot:
     """
     Configure and return a Discord bot with behaviour analogous to
@@ -69,20 +71,28 @@ def create_discord_bot(
     @bot.command(name="help")
     async def help_cmd(ctx: commands.Context):
         await ctx.send(
+            "!new <table>               - create a new table\n"
             "!buy <amount> [user]       - buy chips (bank if no user, or from username)\n"
             "!sell <amount> [user]      - sell chips (bank if no user, or to username)\n"
-            "!list                      - list all players at the table\n"
-            "!join <u> <p>              - register/login with username & password\n"
+            "!list <table>              - list all players at the table\n"
+            "!join <table> <username>   - register/login and join table\n"
             "!leave                     - logout from this account\n"
         )
 
+    @bot.command(name="new")
+    async def new_table_cmd(ctx: commands.Context, table_name: str):
+        created = table_repo.create_table(table_name)
+        if not created:
+            await ctx.send(f"Table '{table_name}' already exists.")
+        else:
+            await ctx.send(f"Table '{table_name}' has been created.")
+
     @bot.command(name="join")
-    async def join_cmd(ctx: commands.Context, username: str, password: str):
+    async def join_cmd(ctx: commands.Context, table_name: str, username: str):
         external_ctx = _build_external_context(ctx.author)
         result = register_or_login_user(
             external_ctx,
             username,
-            password,
             account_repo,
             identity_repo,
             user_repo,
@@ -90,8 +100,15 @@ def create_discord_bot(
         if not result.success:
             await ctx.send(result.error_message or "Join failed.")
         else:
+            # Link this user to the specific table.
+            user = identity_repo.find_user_by_external(
+                "discord", str(ctx.author.id)
+            )
+            if user is not None:
+                table_repo.add_user_to_table(table_name, user.id)
+
             await ctx.send(
-                f"You have joined as '{username}'. You can now buy/sell chips."
+                f"You have joined table '{table_name}' as '{username}'. You can now buy/sell chips."
             )
 
     @bot.command(name="leave")
@@ -101,10 +118,24 @@ def create_discord_bot(
         await ctx.send("You have been logged out on this account.")
 
     @bot.command(name="list")
-    async def list_cmd(ctx: commands.Context):
-        users = user_repo.get_all_users()
+    async def list_cmd(ctx: commands.Context, table_name: str):
+        if not table_repo.exists(table_name):
+            await ctx.send(f"Table '{table_name}' does not exist.")
+            return
+
+        user_ids = table_repo.get_user_ids_for_table(table_name)
+        if not user_ids:
+            await ctx.send(f"No players at table '{table_name}'.")
+            return
+
+        users = []
+        for uid in user_ids:
+            u = user_repo.get_user(uid)
+            if u is not None:
+                users.append(u)
+
         if not users:
-            await ctx.send("No players at the table yet.")
+            await ctx.send(f"No players at table '{table_name}'.")
             return
 
         lines = [f"{u.first_name}: {u.balance}" for u in users]

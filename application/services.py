@@ -79,7 +79,6 @@ def _get_logged_in_user(
 def register_or_login_user(
     external_ctx: ExternalContext,
     username: str,
-    password: str,
     account_repo: AccountRepository,
     identity_repo: IdentityRepository,
     user_repo: UserRepository,
@@ -91,12 +90,10 @@ def register_or_login_user(
 
     existing = account_repo.get_by_username(username)
     if existing is None:
-        # Registration path.
+        # Registration path. Passwords are no longer used; we store
+        # an empty hash placeholder for backwards compatibility.
         account_id = uuid4().hex
-        password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode(
-            "utf-8"
-        )
-        account = Account(id=account_id, username=username, password_hash=password_hash)
+        account = Account(id=account_id, username=username, password_hash="")
         account_repo.create_account(account)
 
         # Create a corresponding User with zero balance.
@@ -110,12 +107,7 @@ def register_or_login_user(
             )
         )
     else:
-        # Login path: verify password.
-        if not bcrypt.checkpw(
-            password.encode("utf-8"), existing.password_hash.encode("utf-8")
-        ):
-            return OperationResult(success=False, error_message="Invalid username or password.")
-
+        # Login path without password: just reuse the existing account.
         account_id = existing.id
 
     # Link this external identity to the account.

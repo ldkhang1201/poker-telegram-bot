@@ -12,6 +12,7 @@ from application.services import (
     sell_chips_to_user,
 )
 from domain.repositories import AccountRepository, IdentityRepository, UserRepository
+from infrastructure.db.table_repository_sqlite import SqliteTableRepository
 
 
 def _build_external_context(message) -> ExternalContext:
@@ -30,6 +31,7 @@ def create_telegram_bot(
     user_repo: UserRepository,
     identity_repo: IdentityRepository,
     account_repo: AccountRepository,
+    table_repo: SqliteTableRepository,
 ) -> telebot.TeleBot:
     """
     Configure and return a TeleBot instance wired to the application layer.
@@ -53,12 +55,27 @@ def create_telegram_bot(
     def handle_help(message):
         bot.send_message(
             message.chat.id,
+            "/new <table>           - create a new table\n"
             "/buy <amount> [user]   - buy chips (bank if no user, or from username)\n"
             "/sell <amount> [user]  - sell chips (bank if no user, or to username)\n"
             "/list                  - list all players at the table\n"
-            "/join <u> <p>          - register/login with username & password\n"
+            "/join <username>       - register/login with username\n"
             "/leave                 - logout from this device\n",
         )
+
+    @bot.message_handler(commands=["new"])
+    def handle_new_table(message):
+        parts = message.text.split()
+        if len(parts) < 2:
+            bot.send_message(message.chat.id, "Usage: /new <table_name>")
+            return
+
+        _, table_name = parts[0], parts[1]
+        created = table_repo.create_table(table_name)
+        if not created:
+            bot.send_message(message.chat.id, f"Table '{table_name}' already exists.")
+        else:
+            bot.send_message(message.chat.id, f"Table '{table_name}' has been created.")
 
     @bot.message_handler(commands=["join"])
     def handle_join(message):
@@ -66,17 +83,24 @@ def create_telegram_bot(
         if len(parts) < 3:
             bot.send_message(
                 message.chat.id,
-                "Usage: /join <username> <password>",
+                "Usage: /join <table> <username>",
             )
             return
 
-        _, username, password = parts[0], parts[1], parts[2]
+        _, table_name, username = parts[0], parts[1], parts[2]
+
+        if not table_repo.exists(table_name):
+            bot.send_message(
+                message.chat.id,
+                f"Table '{table_name}' does not exist. Use /new {table_name} first.",
+            )
+            return
+
         external_ctx = _build_external_context(message)
 
         result = register_or_login_user(
             external_ctx,
             username,
-            password,
             account_repo,
             identity_repo,
             user_repo,
@@ -84,9 +108,16 @@ def create_telegram_bot(
         if not result.success:
             bot.send_message(message.chat.id, result.error_message)
         else:
+            # Link this user to the specific table.
+            user = identity_repo.find_user_by_external(
+                external_ctx.provider, external_ctx.provider_user_id
+            )
+            if user is not None:
+                table_repo.add_user_to_table(table_name, user.id)
+
             bot.send_message(
                 message.chat.id,
-                f"You have joined as '{username}'. You can now buy/sell chips.",
+                f"You have joined table '{table_name}' as '{username}'. You can now buy/sell chips.",
             )
 
     @bot.message_handler(commands=["leave"])
@@ -97,15 +128,33 @@ def create_telegram_bot(
 
     @bot.message_handler(commands=["list"])
     def handle_list(message):
-        users = user_repo.get_all_users()
-        if not users:
-            bot.send_message(message.chat.id, "No players at the table yet.")
+        parts = message.text.split()
+        if len(parts) < 2:
+            bot.send_message(message.chat.id, "Usage: /list <table>")
             return
 
-        lines = [
-            f"{u.first_name}: {u.balance}"
-            for u in users
-        ]
+        _, table_name = parts[0], parts[1]
+
+        if not table_repo.exists(table_name):
+            bot.send_message(message.chat.id, f"Table '{table_name}' does not exist.")
+            return
+
+        user_ids = table_repo.get_user_ids_for_table(table_name)
+        if not user_ids:
+            bot.send_message(message.chat.id, f"No players at table '{table_name}'.")
+            return
+
+        users = []
+        for uid in user_ids:
+            u = user_repo.get_user(uid)
+            if u is not None:
+                users.append(u)
+
+        if not users:
+            bot.send_message(message.chat.id, f"No players at table '{table_name}'.")
+            return
+
+        lines = [f"{u.first_name}: {u.balance}" for u in users]
         total = sum(u.balance for u in users)
         lines.append(f"Total balance: {total}")
 
