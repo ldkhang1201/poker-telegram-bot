@@ -75,6 +75,7 @@ def create_discord_bot(
             "!buy <amount> [user]       - buy chips (bank if no user, or from username)\n"
             "!sell <amount> [user]      - sell chips (bank if no user, or to username)\n"
             "!list [table]              - list all tables (or players at a specific table)\n"
+            "!me                        - show your username, tables, and balance\n"
             "!join <table> <username>   - register/login and join table\n"
             "!leave                     - logout from this account\n"
         )
@@ -116,6 +117,35 @@ def create_discord_bot(
         external_ctx = _build_external_context(ctx.author)
         logout_external_identity(external_ctx, identity_repo)
         await ctx.send("You have been logged out on this account.")
+
+    @bot.command(name="me")
+    async def me_cmd(ctx: commands.Context):
+        external_ctx = _build_external_context(ctx.author)
+
+        # Resolve the logged-in user for this external identity.
+        user = identity_repo.find_user_by_external(
+            external_ctx.provider,
+            external_ctx.provider_user_id,
+        )
+        if user is None:
+            await ctx.send(
+                "You are not logged in. Use !join <table> <username> first."
+            )
+            return
+
+        # Username is stored in `first_name` on the User model.
+        username = user.first_name
+
+        # Find all tables the user is a member of.
+        tables = table_repo.list_tables_for_user(user.id)
+        tables_text = ", ".join(tables) if tables else "None"
+
+        reply = (
+            f"Username: {username}\n"
+            f"Tables: {tables_text}\n"
+            f"Balance: {user.balance}"
+        )
+        await ctx.send(reply)
 
     @bot.command(name="list")
     async def list_cmd(ctx: commands.Context, table_name: str | None = None):

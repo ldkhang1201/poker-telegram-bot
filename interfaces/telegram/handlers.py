@@ -59,6 +59,7 @@ def create_telegram_bot(
             "/buy <amount> [user]   - buy chips (bank if no user, or from username)\n"
             "/sell <amount> [user]  - sell chips (bank if no user, or to username)\n"
             "/list [table]          - list all tables (or players at a specific table)\n"
+            "/me                    - show your username, tables, and balance\n"
             "/join <username>       - register/login with username\n"
             "/leave                 - logout from this device\n",
         )
@@ -125,6 +126,36 @@ def create_telegram_bot(
         external_ctx = _build_external_context(message)
         logout_external_identity(external_ctx, identity_repo)
         bot.send_message(message.chat.id, "You have been logged out on this device.")
+
+    @bot.message_handler(commands=["me"])
+    def handle_me(message):
+        external_ctx = _build_external_context(message)
+
+        # Resolve the logged-in user for this external identity.
+        user = identity_repo.find_user_by_external(
+            external_ctx.provider,
+            external_ctx.provider_user_id,
+        )
+        if user is None:
+            bot.send_message(
+                message.chat.id,
+                "You are not logged in. Use /join <table> <username> first.",
+            )
+            return
+
+        # Username is stored in `first_name` on the User model.
+        username = user.first_name
+
+        # Find all tables the user is a member of.
+        tables = table_repo.list_tables_for_user(user.id)
+        tables_text = ", ".join(tables) if tables else "None"
+
+        reply = (
+            f"Username: {username}\n"
+            f"Tables: {tables_text}\n"
+            f"Balance: {user.balance}"
+        )
+        bot.send_message(message.chat.id, reply)
 
     @bot.message_handler(commands=["list"])
     def handle_list(message):

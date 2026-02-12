@@ -116,6 +116,21 @@ class SqliteTableRepository:
             rows = cur.fetchall()
             return [str(row[0]) for row in rows]
 
+    def list_tables_for_user(self, user_id: str) -> List[str]:
+        """
+        Return all table names that the given user is a member of.
+        """
+
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT table_name FROM table_memberships WHERE user_id = ? "
+                "ORDER BY table_name",
+                (user_id,),
+            )
+            rows = cur.fetchall()
+            return [str(row[0]) for row in rows]
+
     def list_all_tables(self) -> List[str]:
         """
         Return all table names in the system.
